@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel in-progress runs for the same ref so force-pushes don't pile up.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ── Lint ─────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff + mypy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pip install poetry --quiet
+
+      - name: Cache Poetry packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('backend/poetry.lock') }}
+          restore-keys: ${{ runner.os }}-poetry-
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+
+      - name: ruff
+        run: poetry run ruff check .
+
+      # Runs with strict = true from pyproject.toml.
+      # If a third-party library is missing stubs, add e.g. boto3-stubs[s3] to
+      # [tool.poetry.group.dev.dependencies] and re-lock.
+      - name: mypy
+        run: poetry run mypy app/
+
+  # ── Backend tests ─────────────────────────────────────────────────────────────
+  test-backend:
+    name: Test backend (pytest, coverage ≥ 70%)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: clinicflow
+          POSTGRES_PASSWORD: clinicflow
+          # conftest.py connects to `clinicflow` and creates `clinicflow_test`.
+          POSTGRES_DB: clinicflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # conftest.py hardcodes `@postgres:5432` (the docker-compose service name).
+      # On a bare runner, service containers are only reachable at `localhost`.
+      # Adding a /etc/hosts alias makes `postgres` resolve to 127.0.0.1 so the
+      # hardcoded connection string works without modifying conftest.
+      - name: Resolve postgres hostname to localhost
+        run: echo "127.0.0.1 postgres" | sudo tee -a /etc/hosts
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pip install poetry --quiet
+
+      - name: Cache Poetry packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('backend/poetry.lock') }}
+          restore-keys: ${{ runner.os }}-poetry-
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-root
+
+      - name: pytest
+        env:
+          # Minimum required for pydantic-settings; tests override get_db via
+          # FastAPI dependency injection and never hit this URL directly.
+          SECRET_KEY: ci-test-secret-key-not-for-production
+          DATABASE_URL: postgresql+asyncpg://clinicflow:clinicflow@postgres:5432/clinicflow
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          poetry run pytest \
+            --cov=app \
+            --cov-fail-under=70 \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -q
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: backend/coverage.xml
+          retention-days: 7
+
+  # ── Frontend tests ────────────────────────────────────────────────────────────
+  test-frontend:
+    name: Test frontend (Vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          # Relative to repo root, not to working-directory.
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vitest
+        run: npm test
+
+  # ── Docker build ──────────────────────────────────────────────────────────────
+  # Validates that the Dockerfile builds cleanly on linux/amd64 after all
+  # tests pass.  The actual registry push happens in deploy.yml on main.
+  docker-build:
+    name: Docker build (validate)
+    runs-on: ubuntu-latest
+    needs: [lint, test-backend, test-frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: false
+          tags: clinicflow-backend:ci
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

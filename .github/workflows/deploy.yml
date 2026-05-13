@@ -1,0 +1,120 @@
+name: Deploy
+
+# Runs on every push to main.  Branch protection rules should require CI to
+# pass before merging, so this workflow can trust that lint/tests are green.
+on:
+  push:
+    branches: [main]
+
+jobs:
+
+  # ── Build and push backend image to GHCR ─────────────────────────────────────
+  build-push:
+    name: Build + push to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # required to push to ghcr.io
+
+    outputs:
+      image: ghcr.io/${{ github.repository_owner }}/clinicflow-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Produces two tags on every push to main:
+      #   ghcr.io/<owner>/clinicflow-backend:latest
+      #   ghcr.io/<owner>/clinicflow-backend:sha-<short-sha>
+      # The sha tag gives an immutable reference for rollbacks.
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/clinicflow-backend
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Trigger Render deploy ─────────────────────────────────────────────────────
+  #
+  # ONE-TIME RENDER SETUP (do this once in the Render dashboard):
+  #
+  #   1. Create a new Web Service.
+  #      Source → "Deploy an existing image from a registry"
+  #      Image URL: ghcr.io/<your-github-username>/clinicflow-backend:latest
+  #
+  #   2. If your GHCR package is private (the default for new packages):
+  #        a. Create a GitHub Personal Access Token with read:packages scope.
+  #        b. In Render → Service → Environment → "Registry Credentials"
+  #           add the token so Render can pull the image.
+  #      To make the package public: GitHub → Packages → clinicflow-backend →
+  #        Package Settings → "Change visibility" → Public.
+  #
+  #   3. Set the required environment variables in Render → Environment:
+  #        SECRET_KEY, DATABASE_URL, REDIS_URL, OPENAI_API_KEY,
+  #        TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER,
+  #        STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+  #        STRIPE_STARTER_PRICE_ID, STRIPE_GROWTH_PRICE_ID,
+  #        SENTRY_DSN (optional)
+  #
+  #   4. Service Settings → Deploy Hook → copy the URL.
+  #
+  #   5. In this GitHub repo → Settings → Secrets and variables → Actions:
+  #        Add secret: RENDER_DEPLOY_HOOK_URL = <the URL from step 4>
+  #
+  # After setup, every push to main will:
+  #   a. Build + push a new image to GHCR (step above).
+  #   b. POST to the Render deploy hook, which tells Render to pull
+  #      :latest and redeploy the service.
+  #
+  # To roll back: update the Render service image tag to a specific
+  # sha-<short-sha> tag and trigger a manual deploy in the Render dashboard.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-render:
+    name: Trigger Render deploy
+    runs-on: ubuntu-latest
+    needs: build-push
+
+    steps:
+      - name: Deploy to Render
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "${RENDER_DEPLOY_HOOK_URL}" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not configured — skipping."
+            echo "See the setup instructions in deploy.yml to wire up Render."
+            exit 0
+          fi
+
+          echo "Triggering Render deploy..."
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${RENDER_DEPLOY_HOOK_URL}")
+          echo "Render deploy hook HTTP status: ${status}"
+
+          if [[ "${status}" != 2* ]]; then
+            echo "::error::Render deploy hook returned non-2xx status: ${status}"
+            exit 1
+          fi
+
+          echo "Deploy triggered successfully."
