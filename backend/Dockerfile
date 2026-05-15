@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry into a fixed path so it doesn't pollute site-packages
-ENV POETRY_VERSION=1.8.3 \
+ENV POETRY_VERSION=2.4.1 \
     POETRY_HOME=/opt/poetry \
     POETRY_VIRTUALENVS_CREATE=false \
     POETRY_NO_INTERACTION=1
