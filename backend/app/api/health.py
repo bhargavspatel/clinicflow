@@ -88,22 +88,29 @@ async def _check_storage() -> ComponentStatus:
         return "down"
 
 
-def _aggregate(db: ComponentStatus, redis: ComponentStatus, storage: ComponentStatus) -> tuple[str, int]:
-    statuses = {db, redis, storage}
-    if statuses == {"ok"}:
+def _aggregate(db: ComponentStatus, redis: ComponentStatus, storage: ComponentStatus | None) -> tuple[str, int]:
+    # Storage is optional — if not configured, exclude it from liveness determination.
+    core = {db, redis}
+    if core == {"ok"}:
         return "ok", 200
-    if "down" in statuses:
+    if "down" in core:
         return "down", 503
     return "degraded", 503
 
 
 @router.get("/health")
 async def health_check() -> JSONResponse:
-    db, redis, storage = await asyncio.gather(
-        _check_postgres(),
-        _check_redis(),
-        _check_storage(),
-    )
+    settings = get_settings()
+    has_s3 = bool(settings.aws_access_key_id and settings.aws_access_key_id != "minioadmin")
+
+    tasks = [_check_postgres(), _check_redis()]
+    if has_s3:
+        tasks.append(_check_storage())
+
+    results = await asyncio.gather(*tasks)
+    db, redis = results[0], results[1]
+    storage: ComponentStatus | None = results[2] if has_s3 else None
+
     overall, http_status = _aggregate(db, redis, storage)
     logger.info(
         "health_check",
@@ -112,10 +119,10 @@ async def health_check() -> JSONResponse:
         redis=redis,
         storage=storage,
     )
-    return JSONResponse(
-        status_code=http_status,
-        content={"status": overall, "db": db, "redis": redis, "storage": storage},
-    )
+    body: dict = {"status": overall, "db": db, "redis": redis}
+    if storage is not None:
+        body["storage"] = storage
+    return JSONResponse(status_code=http_status, content=body)
 
 
 @router.get("/health/live")

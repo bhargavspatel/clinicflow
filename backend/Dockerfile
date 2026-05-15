@@ -1,14 +1,29 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-RUN pip install poetry --no-cache-dir
+# Build-time deps needed by cryptography, hiredis, asyncpg wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    libssl-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
 
+# Install Poetry into a fixed path so it doesn't pollute site-packages
+ENV POETRY_VERSION=1.8.3 \
+    POETRY_HOME=/opt/poetry \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_NO_INTERACTION=1
+
+RUN pip install --no-cache-dir "poetry==${POETRY_VERSION}"
+
+# Install dependencies first (layer-cached unless lock file changes)
 COPY pyproject.toml poetry.lock* ./
-RUN poetry config virtualenvs.create false \
- && poetry install --no-interaction --no-ansi --no-root
+RUN poetry install --no-root --only main
 
+# Copy application source
 COPY . .
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
