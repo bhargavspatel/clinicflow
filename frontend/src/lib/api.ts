@@ -17,8 +17,10 @@ export function getAccessToken(): string | null {
   return _accessToken
 }
 
+const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1"
+
 export const api = axios.create({
-  baseURL: "http://localhost:8000/api/v1",
+  baseURL: BASE_URL,
   headers: { "Content-Type": "application/json" },
 })
 
@@ -35,7 +37,7 @@ export async function callWithToken<T>(
 ): Promise<T> {
   const { data } = await axios({
     method,
-    url: `http://localhost:8000/api/v1${path}`,
+    url: `${BASE_URL}${path}`,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
@@ -95,7 +97,7 @@ api.interceptors.response.use(
 
     try {
       const { data } = await axios.post<{ access_token: string; refresh_token: string }>(
-        "http://localhost:8000/api/v1/auth/refresh",
+        `${BASE_URL}/auth/refresh`,
         { refresh_token: _refreshToken },
       )
       setAccessToken(data.access_token)

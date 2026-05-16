@@ -22,7 +22,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string, subdomain: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -47,18 +47,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("auth:logout", _clearAuth)
   }, [_clearAuth])
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string, subdomain: string) => {
     setState((s) => ({ ...s, isLoading: true }))
     try {
       const { data } = await api.post<{
         access_token: string
         refresh_token: string
-      }>("/auth/login", { email, password })
+      }>("/auth/login", { email, password, subdomain })
 
       setAccessToken(data.access_token)
       setRefreshToken(data.refresh_token)
 
-      const { data: me } = await api.get<AuthUser>("/users/me")
+      const { data: me } = await api.get<AuthUser>("/auth/me")
       setState({ user: me, isLoading: false })
     } catch (err) {
       setState({ user: null, isLoading: false })
