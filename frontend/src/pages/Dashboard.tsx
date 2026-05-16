@@ -245,13 +245,20 @@ export default function Dashboard() {
         transition={{ duration: 0.5 }}
       >
         <div className="mx-auto max-w-7xl flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-              <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5 text-white" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-              </svg>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
+                <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5 text-white" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
+              </div>
+              <span className="font-bold text-base">ClinicFlow</span>
             </div>
-            <span className="font-bold text-base">ClinicFlow</span>
+            <nav className="hidden md:flex items-center gap-1">
+              <button onClick={() => navigate("/dashboard")} className="px-3 py-1.5 text-sm font-medium text-primary bg-primary/10 rounded-lg">Dashboard</button>
+              <button onClick={() => navigate("/patients")} className="px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">Patients</button>
+              <button onClick={() => navigate("/providers")} className="px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors">Providers</button>
+            </nav>
           </div>
 
           <div className="hidden sm:flex items-center gap-3">
